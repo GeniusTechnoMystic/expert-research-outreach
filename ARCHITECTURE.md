@@ -251,6 +251,8 @@ class EnrichmentPipeline:
 | Pattern guess + SMTP verify | 0.70 | Free | ~60% |
 | Pattern guess only | 0.40 | Free | ~80% |
 
+> **⚠️ SMTP verify risk:** HELO checks against MX servers from an unknown IP can be interpreted as spam reconnaissance. Some providers (Microsoft, Google) track connection patterns from new IPs. **SMTP verify is disabled by default.** Enable manually only after domain reputation is established (week 8+). During warmup, rely on Hunter.io + pattern guess only. See DESIGN_REVIEW.md Finding 6.
+
 ### 3.3 Outbound Channel Adapters (Plugin Pattern)
 
 Each channel implements a uniform interface:
@@ -305,7 +307,33 @@ class OutboundChannel(ABC):
 | Reddit | `RedditChannel` | PRAW | 1 post/sub/day | OAuth 2.0 |
 | ResearchGate | `RGChannel` | Playwright | 1 post/day | Cookie session |
 
-### 3.4 Queue Manager
+### 3.4 Rate Limiter
+
+```python
+class RateLimiter:
+    """
+    Centralized rate limiting across all outbound channels.
+    Tracks per-channel send counts per time window.
+    Enforces warmup curve for SMTP (Phase 1 schedule).
+    """
+    def remaining_quota(self, channel: str) -> int:
+        """Sends remaining for current time window."""
+        pass
+
+    def consume(self, channel: str, count: int = 1) -> bool:
+        """Attempt to consume N sends. Returns False if over quota."""
+        pass
+
+    def warmup_stage(self) -> int:
+        """Returns current warmup week number (1-8+)."""
+        pass
+
+    def reset_at(self, channel: str) -> datetime:
+        """When does the current quota window reset?"""
+        pass
+```
+
+### 3.5 Queue Manager
 
 ```python
 class PriorityQueue:
@@ -318,6 +346,10 @@ class PriorityQueue:
     def age_items(self) -> None:  # boost priority of old items
     def dedup_by_email(self, email: str) -> bool: ...
     def backpressure_level(self) -> float:  # 0.0 = idle, 1.0 = full
+    def get_queue_depth(self, channel: str) -> int: ...
+    def get_oldest_item_age(self) -> timedelta: ...
+    def retry_failed(self, item_id: str) -> None: ...
+    def purge_expired(self, max_age: timedelta) -> int: ...
 ```
 
 **Queue discipline:**
@@ -360,9 +392,23 @@ class CircuitBreaker:
 | Bounce rate | 1-3% | WARN, log, continue |
 | Bounce rate | <1% | Normal operation |
 
-### 3.6 Feedback Loop
+### 3.7 Feedback Loop
 
 ```python
+class AutoReplyFilter:
+    """
+    Filters out auto-replies before they enter the feedback pipeline.
+    Auto-replies (vacation, OOO, sabbatical, delivery failures) should
+    not be classified as negative engagement.
+    """
+    def is_auto_reply(self, reply: Reply) -> bool:
+        """
+        Checks: X-Auto-Response-Suppress header,
+        Precedence: auto_reply field,
+        body contains 'sabbatical' | 'out of office' | 'vacation' | 'not reading email'
+        """
+        pass
+
 class FeedbackLoop:
     """
     Processes replies to outbound emails:
@@ -587,6 +633,19 @@ All API keys, OAuth tokens, and SMTP passwords stored in SOPS-encrypted files:
 | **Total** | **~930MB** | **Low** | **~6GB** | Well within CX22 capacity |
 
 ### 6.3 Cron Schedule
+
+All pipeline jobs write a `_COMPLETE` marker file before finishing. Downstream jobs check for this marker before reading data — this prevents race conditions when a run takes longer than the schedule offset.
+
+```bash
+# Discovery writes marker
+touch /var/data/research_candidates/{run_id}/_COMPLETE
+
+# Enrichment checks marker before reading
+if [ ! -f /var/data/research_candidates/latest/_COMPLETE ]; then
+    log "Discovery still running, skipping this cycle"
+    exit 0
+fi
+```
 
 | Job | Cron Expression | Duration | Notes |
 |-----|----------------|----------|-------|

@@ -14,6 +14,17 @@ An infrastructure layer that lets Hermes reach beyond the digitized web — into
 
 The core insight: not all knowledge is searchable online. The highest-value knowledge is often embedded in human experts' heads or sitting undigitized in library/museum archives. This project bridges that gap.
 
+### 1.1 Recipient-Side Value Proposition
+
+For this system to work, the people being contacted must want to respond. Every outreach must answer "why should this expert spend time on this query?":
+
+- **Personalized framing:** Show awareness of the recipient's specific work (cite their papers, acknowledge their expertise)
+- **Lightweight ask:** The default ask is a 2-sentence pointer or one yes/no question, not a multi-hour consultation
+- **Low friction:** No account creation, no login, no multi-step process. Reply to email or click reply
+- **Attribution:** Honest disclosure that the query was composed with AI assistance, on behalf of a human researcher
+- **Reciprocity:** Offer to share findings, cite back, or acknowledge the contribution
+- **Easy opt-out:** One-click unsubscribe, no questions asked, no follow-ups after opt-out
+
 ## 2. Core Capabilities
 
 ### 2.1 Researcher Discovery
@@ -44,32 +55,49 @@ The core insight: not all knowledge is searchable online. The highest-value know
 ## 3. Architecture Overview
 
 ```
-┌────────────────────────────────────────────────────────────────┐
-│                    RESEARCH ORCHESTRATOR                         │
-│                    (Hermes cron pipeline)                        │
-├────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌─────────────────┐   ┌─────────────────┐   ┌───────────────┐  │
-│  │    DISCOVERY     │──▶│   ENRICHMENT    │──▶│   OUTBOUND    │  │
-│  │  (every 6h)      │   │  (every 6h+1h)  │   │  (every 12h)  │  │
-│  │                  │   │                  │   │               │  │
-│  │ OpenAlex API     │   │ Hunter.io verify │   │ Stalwart SMTP │  │
-│  │ Semantic Scholar │   │ ORCID lookup     │   │ StackExchange │  │
-│  │ Topic filtering  │   │ Pattern guessing │   │ Reddit PRAW   │  │
-│  │ Authority rank   │   │ Affil→domain     │   │ ResearchGate  │  │
-│  └─────────────────┘   └─────────────────┘   └───────────────┘  │
-│                        │                                          │
-│                        ▼                                          │
-│               ┌─────────────────┐                                │
-│               │   DIGITIZATION   │  (daily)                       │
-│               │                  │                                │
-│               │ Archive.org API  │                                │
-│               │ HathiTrust API   │                                │
-│               │ Univ. web forms  │                                │
-│               │ Email requests   │                                │
-│               └─────────────────┘                                │
-│                                                                  │
-└────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                    RESEARCH ORCHESTRATOR                             │
+│                    (Hermes cron pipeline)                            │
+├────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌─────────────────┐   ┌─────────────────┐   ┌──────────────────┐  │
+│  │    DISCOVERY     │──▶│   ENRICHMENT    │──▶│     REVIEW       │  │
+│  │  (every 6h)      │   │  (every 6h+1h)  │   │   GATE (3.5)     │  │
+│  │                  │   │                  │   │  (human review)  │  │
+│  │ OpenAlex API     │   │ Hunter.io verify │   │                  │  │
+│  │ Semantic Scholar │   │ ORCID lookup     │   │  auto-promotes   │  │
+│  │ Topic filtering  │   │ Pattern guessing │   │  after N clean   │  │
+│  │ Authority rank   │   │ Affil→domain     │   │  batches         │  │
+│  └─────────────────┘   └─────────────────┘   └────────┬─────────┘  │
+│                        │                               │            │
+│                        ▼                               ▼            │
+│               ┌──────────────────┐           ┌──────────────────┐   │
+│               │   PRIORITY QUEUE  │           │  OUTBOUND 4A     │   │
+│               │   (Phase 6.0)     │◀──────────│  (API channels)  │   │
+│               │   aging, dedup,   │           │  SMTP StackEx    │   │
+│               │   throttle,       │           │  Reddit          │   │
+│               │   backpressure    │           └──────────────────┘   │
+│               └────────┬─────────┘           ┌──────────────────┐   │
+│                        │                     │  OUTBOUND 4B     │   │
+│                        │────────────────────▶│  (browser auto)  │   │
+│                        │                     │  ResearchGate    │   │
+│                        │                     │  LinkedIn (prob) │   │
+│                        ▼                     └──────────────────┘   │
+│               ┌──────────────────┐                                  │
+│               │   DIGITIZATION   │  (parallel with Phase 2)         │
+│               │   Archive.org    │                                  │
+│               │   HathiTrust     │                                  │
+│               │   Univ. forms    │                                  │
+│               └──────────────────┘                                  │
+│                        │                                             │
+│                        ▼                                             │
+│               ┌──────────────────┐                                  │
+│               │  FEEDBACK LOOP   │──▶ updates discovery ranking     │
+│               │  replies →       │──▶ updates template selection    │
+│               │  response rates  │──▶ updates expert scores         │
+│               └──────────────────┘                                  │
+│                                                                      │
+└────────────────────────────────────────────────────────────────────┘
          │                    │                    │
          ▼                    ▼                    ▼
 ┌──────────────────┐  ┌─────────────────┐  ┌──────────────────┐
@@ -77,8 +105,9 @@ The core insight: not all knowledge is searchable online. The highest-value know
 │  Stalwart (Rust) │  │  StackExchange  │  │  CleverX API     │
 │  Postfix-optional│  │  Reddit         │  │  Guidepoint MCP  │
 │  DKIM/DMARC/SPF  │  │  ResearchGate   │  │  (future)        │
-│  JMAP + IMAP     │  │  LinkedIn       │  │                  │
+│  JMAP + IMAP     │  │  LinkedIn (?)   │  │                  │
 │  Catch-all       │  │  (browser)      │  │                  │
+│  Circuit breaker │  │                 │  │                  │
 └──────────────────┘  └─────────────────┘  └──────────────────┘
 ```
 
@@ -113,12 +142,14 @@ The core insight: not all knowledge is searchable online. The highest-value know
 
 | Phase | Focus | Duration | Deliverable |
 |-------|-------|----------|-------------|
-| **1 — Foundation** | Domain + VPS + Stalwart email + DNS | Week 1 | Working self-hosted email, verified deliverability |
-| **2 — Discovery** | OpenAlex + Semantic Scholar + ORCID integration | Week 2 | Discovery cron that finds experts for any topic |
-| **3 — Enrichment** | Hunter.io + email pattern guessing + verification | Week 2 | Enriched contact list with verified emails |
-| **4 — Outbound** | Stack Exchange + Reddit + SMTP outreach | Week 3 | Multi-channel automated expert querying |
-| **5 — Digitization** | Archive.org + university form detection | Week 3 | Automated digitization request pipeline |
-| **6 — Orchestration** | Response handling + reputation + integration | Week 4 | Full pipeline with response classification |
+| **1 — Foundation** | Domain + VPS + Stalwart email + DNS + circuit breaker | Week 1-2 | Working self-hosted email, 10/10 deliverability, circuit breaker armed |
+| **2 — Discovery** | OpenAlex + Semantic Scholar + ORCID integration | Week 2-3 | Discovery cron that finds experts for any topic |
+| **3 — Enrichment** | Hunter.io + email pattern guessing + verification | Week 3 | Enriched contact list with verified emails |
+| **3.5 — Review Gate** | Human review queue, disclosure, auto-promotion | Week 3 | First outbound batch approved by user |
+| **4A — Outbound API** | SMTP + Stack Exchange + Reddit (API-based) | Week 3-4 | Multi-channel automated expert querying |
+| **4B — Browser Auto** | ResearchGate + LinkedIn (browser automation) | Week 4-5 | Browser-automated channels running |
+| **5 — Digitization** | Archive.org + university form detection (parallel w/ Phase 2) | Week 2-4 | Automated digitization request pipeline |
+| **6 — Orchestration** | Queue discipline + feedback loop + template quality + response handling | Week 5-8 | Full pipeline with feedback-driven ranking, template optimization, dry-run mode |
 
 ## 6. Cost Estimates
 

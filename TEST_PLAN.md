@@ -245,7 +245,8 @@ addopts = -v --tb=short --strict-markers
 | E-001 | `test_enrich_priority_metadata_over_orcid` | Metadata email chosen over ORCID when both available | Hunter.io, ORCID | Both present, same address |
 | E-002 | `test_enrich_priority_orcid_over_hunter` | ORCID email chosen over Hunter.io | Hunter.io, ORCID | Confidence 0.90 vs 0.85 |
 | E-003 | `test_enrich_pattern_guess_fallback` | No metadata/ORCID/Hunter → pattern guess | All return None | Multiple patterns for same domain |
-| E-004 | `test_enrich_smtp_verify_disabled_during_warmup` | SMTP verify skipped before week 8 | None | Verify called in week 8+ |
+|| E-004 | `test_enrich_smtp_verify_disabled_by_default` | SMTP verify disabled in default config — enabled only with explicit manual override flag | None | Verify never called in default config |
+|| E-004b | `test_enrich_smtp_verify_manual_enable` | SMTP verify enabled via SMTP_VERIFY_ENABLED=true in env — checks week >= 8, logs warning | User acknowledges risk prompt | Verify called only when explicitly enabled AND week >= 8 |
 | E-005 | `test_enrich_pattern_guess_formats` | Correct patterns: first.last, flast, lastf, first_last | None | Hyphenated names, middle initials |
 | E-006 | `test_enrich_handles_invalid_email_format` | Malformed email → filtered out, not enqueued | Hunter.io returns invalid | Empty string, missing @ |
 | E-007 | `test_enrich_hunter_rate_limit` | Hunter.io 429 → skip, continue with next candidate | Hunter.io returns 429 | All subsequent candidates use pattern guess |
@@ -289,7 +290,9 @@ addopts = -v --tb=short --strict-markers
 | O-011 | `test_channel_router_smtp` | Email-type query → SMTPChannel | Channel registry | None |
 | O-012 | `test_channel_router_se` | Broad question → SEChannel | Channel registry | None |
 | O-013 | `test_channel_router_fallback` | Unrecognized query → SMTPChannel (default) | Channel registry | None |
-| O-014 | `test_all_channels_dry_run` | Dry-run mode logs instead of sends | All channels | None |
+|| O-014 | `test_all_channels_dry_run` | Dry-run mode logs instead of sends | All channels | None |
+|| O-015 | `test_smtp_can_send_returns_true_for_email` | SMTPChannel.can_send(email_message) → True | SMTP mock | None |
+|| O-016 | `test_smtp_can_send_returns_false_for_forum` | SMTPChannel.can_send(forum_message) → False | SMTP mock | SE message, Reddit message |
 
 ### 3.5 Circuit Breaker
 
@@ -309,6 +312,8 @@ addopts = -v --tb=short --strict-markers
 | C-010 | `test_record_bounce_accumulates` | Multiple bounces tracked correctly | 100 bounces, 0 bounces |
 | C-011 | `test_record_delivery_accumulates` | Successful deliveries tracked correctly | None |
 | C-012 | `test_reset_clears_state` | Manual reset clears counters, returns to CLOSED | None |
+| C-013 | `test_auto_reset_full_recovery` | OPEN → cooldown → HALF_OPEN → test succeeds → CLOSED, warmup counter preserved | Cooldown boundary, warmup counter persists |
+| C-014 | `test_auto_reset_recovery_fails` | OPEN → cooldown → HALF_OPEN → test fails → OPEN again, alert generated | Repeated failures
 
 ### 3.6 Rate Limiter
 
@@ -339,7 +344,11 @@ addopts = -v --tb=short --strict-markers
 | F-006 | `test_positive_updates_ranking` | POSITIVE → researcher's ranking weight increased | None | Already high weight cap |
 | F-007 | `test_negative_decays_ranking` | NEGATIVE → researcher's ranking weight decreased | None | Weight floor (minimum) |
 | F-008 | `test_follow_up_triggered` | No reply after N days → follow-up queued | None | Boundary: N-1, N, N+1 days |
-| F-009 | `test_follow_up_not_triggered_after_reply` | Reply received → no follow-up | None | Reply received at exactly N days |
+|| F-009 | `test_follow_up_not_triggered_after_reply` | Reply received → no follow-up | None | Reply received at exactly N days |
+|| F-010 | `test_classify_positive_french` | "Merci pour votre question intéressante" → POSITIVE | French, accented characters |
+|| F-011 | `test_classify_negative_german` | "Ich bin nicht interessiert" → NEGATIVE | German, compound words |
+|| F-012 | `test_classify_ooo_japanese` | "只今休暇中です" (I'm on vacation) → OOO | CJK characters, no Latin chars |
+|| F-013 | `test_classify_spanish_auto_reply_not_negative` | "Estoy de vacaciones, volveré en marzo" → OOO, not NEGATIVE | Auto-reply keyword in non-English context |
 
 ### 3.8 Auto-Reply Filter
 
@@ -381,7 +390,8 @@ addopts = -v --tb=short --strict-markers
 | DE-001 | `test_discovery_to_enrichment_full_flow` | 10 candidates discovered → enriched with verified emails → confidence scores assigned |
 | DE-002 | `test_discovery_to_enrichment_partial_emails` | 10 candidates, 4 with metadata emails, 3 with ORCID, 3 pattern-only → correct confidence per source |
 | DE-003 | `test_discovery_to_enrichment_all_fail` | All API calls fail → empty output, error logged |
-| DE-004 | `test_discovery_to_enrichment_data_format` | Output JSON schema matches expected format |
+|| DE-004 | `test_discovery_to_enrichment_data_format` | Output JSON schema matches expected format |
+|| DE-005 | `test_digitization_email_sent_via_smtp` | Digitization pipeline runs → SMTPChannel.send() called with correct parameters (work title, institution, rights context) | Dry-run mode logs correctly, nothing sent |
 
 ### 4.2 Enrichment → Queue
 
@@ -493,7 +503,8 @@ For each component, systematically test all failure modes from the risk register
 | AF-003 | ORCID timeout | 30s TCP timeout | Skip, continue with other sources |
 | AF-004 | Hunter.io malformed response | Non-JSON 200 | Error, skip Hunter |
 | AF-005 | Stack Exchange API version change | Unexpected response fields | Fail gracefully, log |
-| AF-006 | All external APIs down simultaneously | All return 503 | All pipelines pause, CRITICAL alert |
+|| AF-006 | All external APIs down simultaneously | All return 503 | All pipelines pause, CRITICAL alert |
+|| AF-007 | Rate limit cascade does not corrupt state | OpenAlex 429 → partial discovery → enrichment receives partial → queue rejects partial | Correct error logged, no corrupt state produced |
 
 ### 6.3 Queue Edge Cases
 
@@ -505,7 +516,9 @@ For each component, systematically test all failure modes from the risk register
 | QC-002 | Item with priority overflow (>10) after aging | Capped at 10 |
 | QC-003 | Dedup with 1,000 identical emails | 1 item enqueued, 999 rejected |
 | QC-004 | Queue file simultaneously read/written | File lock acquired, no corruption |
-| QC-005 | Backpressure at 0.8 → discovery stops producing | Discovery skips next cycle |
+|| QC-005 | Backpressure at 0.8 → discovery stops producing | Discovery skips next cycle |
+|| QC-006 | Concurrent cron runs on same stage | Two discovery runs start simultaneously — lockfile prevents double write | Latter run logs "skipped, lock held", only one output dir created |
+|| QC-007 | Cron lockfile cleanup on crash | Discovery killed mid-run — lockfile cleaned up so next run isn't permanently blocked | Next run succeeds, creates new output dir |
 
 ---
 
@@ -522,7 +535,8 @@ Using Hypothesis or similar property-based testing:
 | PB-003 | Rate limiter monotonicity | Any consume + reset sequence | `remaining_quota()` never increases except after reset |
 | PB-004 | Dedup idempotency | Any sequence of enqueue calls | Enqueuing the same email N times results in exactly 1 item |
 | PB-005 | Confidence score bounds | All possible enrichment inputs | All confidence scores are in [0.0, 1.0] |
-| PB-006 | Age can't decrease priority | Any aging schedule | `age_items()` never decreases an item's priority |
+|| PB-006 | Age can't decrease priority | Any aging schedule | `age_items()` never decreases an item's priority |
+|| PB-007 | Pipeline output always valid JSON schema | All possible upstream failure combinations | Pipeline output always validates against expected JSON schema regardless of upstream errors |
 
 ---
 
@@ -536,6 +550,9 @@ Using Hypothesis or similar property-based testing:
 | S-002 | `test_no_credentials_in_logs` | Log output redacts credentials (replaces with `****`) |
 | S-003 | `test_sops_encrypted_files` | All secret files under `~/.hermes/secrets/` are SOPS-encrypted |
 | S-004 | `test_env_file_not_committed` | `.env` in `.gitignore`, not tracked by git |
+| S-005 | `test_warmup_state_persists_across_restart` | Write warmup week 5, simulate restart, read back week 5 | Warmup counter preserved |
+| S-006 | `test_warmup_state_backup_created` | Daily backup of warmup_state.json triggers correctly | Backup file exists, correct format |
+| S-007 | `test_warmup_state_recovery_from_backup` | Restore from backup tarball, verify week counter and all metrics preserved | All counters match pre-backup state |
 
 ### 8.2 TOS Compliance Enforcement
 
@@ -544,7 +561,8 @@ Using Hypothesis or similar property-based testing:
 | T-001 | `test_all_outbound_has_attribution` | Every channel adapter appends attribution/disclosure |
 | T-002 | `test_site_policy_lookup_enforced` | Sites with `ban` policy → channel skips, logs reason |
 | T-003 | `test_review_gate_requires_approval` | Messages in review queue → NOT sent until approved |
-| T-004 | `test_opt_out_removes_from_queue` | Unsubscribe link clicked → email removed from all queues |
+|| T-004 | `test_opt_out_removes_from_queue` | Unsubscribe link clicked → email removed from all queues |
+|| T-005 | `test_review_gate_bypass_raises_error` | Calling outbound channel directly with unapproved message raises ReviewGateError | Direct SMTP send, direct SE post, direct Reddit submit — all blocked |
 
 ### 8.3 GDPR Compliance
 
@@ -589,7 +607,15 @@ pytest tests/adversarial/ -v --tb=long
 
 ```yaml
 name: Test Suite
-on: [push, pull_request]
+on:
+  push:
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '*.md'
+      - 'docs/**'
 
 jobs:
   test:
@@ -683,25 +709,25 @@ Tests must be written and passing in this order, following the TDD Red-Green-Ref
 
 | Order | Component | Tests | Depends On |
 |-------|-----------|-------|------------|
-| 1 | Circuit Breaker | C-001 to C-012 | None |
+| 1 | Circuit Breaker | C-001 to C-014 | None |
 | 2 | Rate Limiter | R-001 to R-008 | None |
 | 3 | Auto-Reply Filter | AR-001 to AR-007 | None |
 | 4 | Discovery Engine | D-001 to D-010 | None |
-| 5 | Enrichment Pipeline | E-001 to E-009 | None |
+| 5 | Enrichment Pipeline | E-001 to E-009, E-004b | None |
 | 6 | Priority Queue | Q-001 to Q-011 | None |
-| 7 | Outbound Channels | O-001 to O-014 | Rate Limiter |
-| 8 | Feedback Loop | F-001 to F-009 | Auto-Reply Filter |
+| 7 | Outbound Channels | O-001 to O-016 | Rate Limiter |
+| 8 | Feedback Loop | F-001 to F-013 | Auto-Reply Filter |
 | 9 | Digitization Pipeline | DG-001 to DG-006 | None |
-| 10 | Integration: Discovery→Enrichment | DE-001 to DE-004 | 4, 5 |
+| 10 | Integration: Discovery→Enrichment | DE-001 to DE-005 | 4, 5 |
 | 11 | Integration: Enrichment→Queue | EQ-001 to EQ-003 | 5, 6 |
 | 12 | Integration: Queue→Outbound | QO-001 to QO-004 | 6, 7 |
 | 13 | Integration: Outbound→Feedback | OF-001 to OF-004 | 7, 8 |
-| 14 | Integration: Circuit Breaker | CB-001 to CB-005 | 1, 7 |
+| 14 | Integration: Circuit Breaker | CB-001 to CB-006 | 1, 7 |
 | 15 | Adversarial FMEA | FM-001 to FM-014 | All unit tests |
-| 16 | API Failures | AF-001 to AF-006 | All unit tests |
-| 17 | Queue Edge Cases | QC-001 to QC-005 | 6 |
-| 18 | Property-Based | PB-001 to PB-006 | All unit tests |
-| 19 | Security & Compliance | S-001 to G-004 | Integration tests |
+| 16 | API Failures | AF-001 to AF-007 | All unit tests |
+| 17 | Queue Edge Cases | QC-001 to QC-007 | 6 |
+| 18 | Property-Based | PB-001 to PB-007 | All unit tests |
+| 19 | Security & Compliance | S-001 to G-004, S-005 to S-007 | Integration tests |
 | 20 | E2E Full Pipeline | FP-001 to FP-005 | All integration tests |
 
 ---
@@ -710,12 +736,12 @@ Tests must be written and passing in this order, following the TDD Red-Green-Ref
 
 The test plan is complete when:
 
-- [ ] 80+ unit tests passing (all components)
-- [ ] 15+ integration tests passing (all pipeline boundaries)
+- [ ] 90+ unit tests passing (all components)
+- [ ] 16+ integration tests passing (all pipeline boundaries)
 - [ ] 5 E2E tests passing (dry-run mode)
 - [ ] 14 adversarial FMEA scenarios passing (all failure modes)
-- [ ] 6 property-based invariants verified (generative)
-- [ ] 10+ security/GDPR tests passing (compliance)
+- [ ] 7 property-based invariants verified (generative)
+- [ ] 14+ security/GDPR tests passing (compliance)
 - [ ] Line coverage >= 85%
 - [ ] All tests pass in CI (GitHub Actions)
 - [ ] Dry-run mode verified as safe (no outbound messages sent)
